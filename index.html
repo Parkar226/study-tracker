@@ -117,7 +117,17 @@
         
         // --- Firebase 設定 ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-study-tracker';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const firebaseConfig = {
+  apiKey: "AIzaSyAmjO3MtLVqs2nwW71WVm-TOxdrZgKnjkk",
+  authDomain: "study-tracker-89346.firebaseapp.com",
+  projectId: "study-tracker-89346",
+  storageBucket: "study-tracker-89346.firebasestorage.app",
+  messagingSenderId: "983840838350",
+  appId: "1:983840838350:web:06fe90ed3fe6c2153ef69f"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
