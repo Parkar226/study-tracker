@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>勉強時間トラッカー</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .animate-pulse-fast {
+            animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            50% {
+                opacity: .5;
+            }
+        }
+        .ranking-tab-btn {
+            padding: 0.25rem 1rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background-color 0.2s, color 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+        .active-tab {
+            background-color: #4f46e5; /* indigo-600 */
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex items-center justify-center min-h-screen">
+
+    <div id="loading-spinner" class="text-center">
+        <svg class="animate-spin -ml-1 mr-3 h-10 w-10 text-white mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p class="mt-2 text-lg">接続しています...</p>
+    </div>
+
+    <div id="auth-screen" class="hidden w-full max-w-md mx-auto p-4 md:p-8">
+        <div class="bg-gray-800 shadow-lg rounded-xl p-6">
+            <h1 class="text-3xl font-bold text-center mb-6 text-indigo-400">勉強時間トラッカー</h1>
+            <div class="mb-6">
+                <h2 class="text-xl font-semibold mb-3">新しいユーザーとして始める</h2>
+                <div class="flex gap-2">
+                    <input type="text" id="username-input" placeholder="ユーザーネームを入力" class="w-full bg-gray-700 text-white rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button id="create-user-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md transition-colors duration-300">作成</button>
+                </div>
+            </div>
+            <div>
+                <h2 class="text-xl font-semibold mb-3">既存のユーザーを選択</h2>
+                <div id="user-list" class="space-y-2 max-h-48 overflow-y-auto">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-screen" class="hidden w-full max-w-4xl mx-auto p-4 md:p-8">
+        <div class="bg-gray-800 shadow-lg rounded-xl p-6">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold">ようこそ、<span id="current-username" class="text-indigo-400"></span> さん</h1>
+                    <p class="text-gray-400">今日の勉強時間</p>
+                </div>
+                <button id="logout-btn" class="bg-gray-600 hover:bg-gray-700 text-white text-sm font-bold py-2 px-3 rounded-md transition-colors duration-300">ユーザー変更</button>
+            </div>
+
+            <div class="bg-gray-900 p-6 rounded-lg mb-6 text-center">
+                <p id="timer" class="text-5xl md:text-7xl font-bold tracking-wider mb-4">00:00:00</p>
+                <button id="toggle-study-btn" class="w-full md:w-1/2 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg text-xl transition-colors duration-300">
+                    計測開始
+                </button>
+            </div>
+
+            <div>
+                 <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold">勉強時間ランキング</h2>
+                    <div class="flex gap-1 rounded-lg bg-gray-700 p-1">
+                        <button id="show-daily-btn" class="ranking-tab-btn active-tab">今日</button>
+                        <button id="show-weekly-btn" class="ranking-tab-btn">今週</button>
+                    </div>
+                </div>
+                <div id="ranking-list" class="space-y-3">
+                    </div>
+                 <div id="weekly-ranking-list" class="space-y-3 hidden">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, serverTimestamp, updateDoc, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- DOM要素 ---
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const authScreen = document.getElementById('auth-screen');
+        const mainScreen = document.getElementById('main-screen');
+        const usernameInput = document.getElementById('username-input');
+        const createUserBtn = document.getElementById('create-user-btn');
+        const userList = document.getElementById('user-list');
+        const currentUsername = document.getElementById('current-username');
+        const logoutBtn = document.getElementById('logout-btn');
+        const timerDisplay = document.getElementById('timer');
+        const toggleStudyBtn = document.getElementById('toggle-study-btn');
+        const rankingList = document.getElementById('ranking-list');
+        const weeklyRankingList = document.getElementById('weekly-ranking-list');
+        const showDailyBtn = document.getElementById('show-daily-btn');
+        const showWeeklyBtn = document.getElementById('show-weekly-btn');
+        
+        // --- Firebase 設定 ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-study-tracker';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const usersCollectionRef = collection(db, `/artifacts/${appId}/public/data/study_users`);
+
+        // --- グローバル変数 ---
+        let currentUserId = null;
+        let currentUserData = null;
+        let localTimerInterval = null;
+        let usersData = [];
+
+        // --- メイン処理 ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUserId = localStorage.getItem('studyTrackerUserId');
+                if (currentUserId) {
+                    await loadUser(currentUserId);
+                } else {
+                    showAuthScreen();
+                }
+                setupUserListListener();
+            } else {
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch(error) {
+                    console.error("Anonymous sign-in failed:", error);
+                    loadingSpinner.innerText = "認証に失敗しました。ページを再読み込みしてください。";
+                }
+            }
+        });
+        
+        function showAuthScreen() {
+            loadingSpinner.classList.add('hidden');
+            authScreen.classList.remove('hidden');
+            mainScreen.classList.add('hidden');
+        }
+
+        function showMainScreen() {
+            loadingSpinner.classList.add('hidden');
+            authScreen.classList.add('hidden');
+            mainScreen.classList.remove('hidden');
+        }
+
+        // --- ユーザー管理 ---
+        async function loadUser(userId) {
+            currentUserId = userId;
+            localStorage.setItem('studyTrackerUserId', userId);
+            
+            const userDocRef = doc(usersCollectionRef, userId);
+            const unsub = onSnapshot(userDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    currentUserData = { id: docSnap.id, ...docSnap.data() };
+                    handleTimePeriodChange(); // 日付や週が変わっていないかチェック
+                    updateUI();
+                    if (!mainScreen.classList.contains('hidden')) {
+                        return;
+                    }
+                    showMainScreen();
+                } else {
+                    logout();
+                }
+            });
+        }
+        
+        createUserBtn.addEventListener('click', async () => {
+            const username = usernameInput.value.trim();
+            if (username && auth.currentUser) {
+                const newUserId = auth.currentUser.uid + "_" + Date.now();
+                const newUser = {
+                    username: username,
+                    isStudying: false,
+                    lastStartTime: null,
+                    accumulatedToday: 0,
+                    accumulatedThisWeek: 0,
+                    lastUpdateDate: getTodayDateString(),
+                    lastUpdateWeek: getThisWeekString(),
+                };
+                try {
+                    await setDoc(doc(usersCollectionRef, newUserId), newUser);
+                    usernameInput.value = '';
+                    await loadUser(newUserId);
+                } catch (error) {
+                    console.error("Error creating user:", error);
+                    alert("ユーザー作成に失敗しました。");
+                }
+            } else {
+                alert("ユーザーネームを入力してください。");
+            }
+        });
+
+        logoutBtn.addEventListener('click', logout);
+
+        function logout() {
+            if (localTimerInterval) clearInterval(localTimerInterval);
+            currentUserId = null;
+            currentUserData = null;
+            localStorage.removeItem('studyTrackerUserId');
+            showAuthScreen();
+        }
+
+        // --- リアルタイムリスナー ---
+        function setupUserListListener() {
+            onSnapshot(usersCollectionRef, (snapshot) => {
+                usersData = [];
+                snapshot.forEach(doc => {
+                    usersData.push({ id: doc.id, ...doc.data() });
+                });
+                renderUserList();
+                renderRankingList();
+                renderWeeklyRankingList();
+            });
+        }
+        
+        function renderUserList() {
+            userList.innerHTML = '';
+            if (usersData.length === 0) {
+                userList.innerHTML = '<p class="text-gray-400">ユーザーがいません。作成してください。</p>';
+                return;
+            }
+            usersData
+                .sort((a,b) => a.username.localeCompare(b.username))
+                .forEach(user => {
+                    const userButton = document.createElement('button');
+                    userButton.className = 'w-full text-left bg-gray-700 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200';
+                    userButton.textContent = user.username;
+                    userButton.dataset.userId = user.id;
+                    userButton.addEventListener('click', () => loadUser(user.id));
+                    userList.appendChild(userButton);
+            });
+        }
+
+        function renderRankingList() {
+            rankingList.innerHTML = '';
+            if (usersData.length === 0) return;
+
+            const sortedUsers = [...usersData].sort((a, b) => calculateTotalTime(b) - calculateTotalTime(a));
+            
+            sortedUsers.forEach((user, index) => {
+                const totalTime = calculateTotalTime(user);
+                const isCurrentUser = user.id === currentUserId;
+                const rankingItem = createRankingItem(user, index, totalTime, isCurrentUser);
+                rankingList.appendChild(rankingItem);
+            });
+        }
+        
+        function renderWeeklyRankingList() {
+            weeklyRankingList.innerHTML = '';
+            if (usersData.length === 0) return;
+
+            const sortedUsers = [...usersData].sort((a, b) => calculateWeeklyTotalTime(b) - calculateWeeklyTotalTime(a));
+
+            sortedUsers.forEach((user, index) => {
+                const totalTime = calculateWeeklyTotalTime(user);
+                const isCurrentUser = user.id === currentUserId;
+                const rankingItem = createRankingItem(user, index, totalTime, isCurrentUser);
+                weeklyRankingList.appendChild(rankingItem);
+            });
+        }
+
+        function createRankingItem(user, index, totalTime, isCurrentUser) {
+            const formattedTime = formatTime(totalTime);
+            let medal = '';
+            if (index === 0) medal = '🥇';
+            if (index === 1) medal = '🥈';
+            if (index === 2) medal = '🥉';
+
+            const rankingItem = document.createElement('div');
+            rankingItem.className = `p-3 rounded-lg flex items-center justify-between ${isCurrentUser ? 'bg-indigo-900/50' : 'bg-gray-700'}`;
+            
+            rankingItem.innerHTML = `
+                <div class="flex items-center">
+                    <span class="text-lg font-bold w-8">${medal || index + 1}</span>
+                    <p class="font-semibold">${user.username}</p>
+                </div>
+                <div class="flex items-center gap-4">
+                     ${user.isStudying ? '<span class="text-green-400 animate-pulse-fast font-bold text-sm">勉強中</span>' : '<span class="text-gray-400 text-sm">休憩中</span>'}
+                    <p class="font-mono font-bold text-lg">${formattedTime}</p>
+                </div>
+            `;
+            return rankingItem;
+        }
+        
+        // --- 時間計測 ---
+        toggleStudyBtn.addEventListener('click', async () => {
+            if (!currentUserData) return;
+            const userDocRef = doc(usersCollectionRef, currentUserId);
+            
+            try {
+                if (currentUserData.isStudying) {
+                    if (currentUserData.lastStartTime && typeof currentUserData.lastStartTime.toDate === 'function') {
+                        const elapsedTime = Date.now() - currentUserData.lastStartTime.toDate().getTime();
+                        await updateDoc(userDocRef, {
+                            isStudying: false,
+                            lastStartTime: null,
+                            accumulatedToday: increment(elapsedTime),
+                            accumulatedThisWeek: increment(elapsedTime)
+                        });
+                    } else {
+                        await updateDoc(userDocRef, { isStudying: false, lastStartTime: null });
+                    }
+                } else {
+                    await updateDoc(userDocRef, { isStudying: true, lastStartTime: serverTimestamp() });
+                }
+            } catch (error) {
+                console.error("Error toggling study state:", error);
+                alert("状態の更新に失敗しました。");
+            }
+        });
+        
+        function updateUI() {
+            if (!currentUserData) return;
+            
+            currentUsername.textContent = currentUserData.username;
+            if (localTimerInterval) clearInterval(localTimerInterval);
+
+            if (currentUserData.isStudying) {
+                toggleStudyBtn.textContent = '計測停止';
+                toggleStudyBtn.className = "w-full md:w-1/2 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg text-xl transition-colors duration-300";
+
+                if (currentUserData.lastStartTime && typeof currentUserData.lastStartTime.toDate === 'function') {
+                    const startTime = currentUserData.lastStartTime.toDate().getTime();
+                    localTimerInterval = setInterval(() => {
+                        const elapsed = Date.now() - startTime;
+                        const totalTime = (currentUserData.accumulatedToday || 0) + elapsed;
+                        timerDisplay.textContent = formatTime(totalTime);
+                    }, 1000);
+                } else {
+                    timerDisplay.textContent = formatTime(currentUserData.accumulatedToday || 0);
+                }
+
+            } else {
+                toggleStudyBtn.textContent = '計測開始';
+                toggleStudyBtn.className = "w-full md:w-1/2 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg text-xl transition-colors duration-300";
+                timerDisplay.textContent = formatTime(currentUserData.accumulatedToday || 0);
+            }
+            renderRankingList();
+            renderWeeklyRankingList();
+        }
+
+        async function handleTimePeriodChange() {
+             if (!currentUserData) return;
+             const today = getTodayDateString();
+             const thisWeek = getThisWeekString();
+             const userDocRef = doc(usersCollectionRef, currentUserId);
+             let updates = {};
+
+             if (currentUserData.lastUpdateDate !== today) {
+                updates.accumulatedToday = 0;
+                updates.lastUpdateDate = today;
+                if (currentUserData.isStudying) {
+                    updates.isStudying = false;
+                    updates.lastStartTime = null;
+                }
+             }
+             if (currentUserData.lastUpdateWeek !== thisWeek) {
+                 updates.accumulatedThisWeek = 0;
+                 updates.lastUpdateWeek = thisWeek;
+             }
+
+             if(Object.keys(updates).length > 0) {
+                 await updateDoc(userDocRef, updates);
+             }
+        }
+
+        // --- ヘルパー関数 ---
+        function formatTime(ms) {
+            if (ms < 0) ms = 0;
+            const totalSeconds = Math.floor(ms / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+        
+        function getTodayDateString() {
+            const jstOffset = 9 * 60 * 60 * 1000;
+            const jstDate = new Date(Date.now() + jstOffset);
+            return jstDate.toISOString().split('T')[0];
+        }
+
+        function getThisWeekString() {
+            const jstOffset = 9 * 60 * 60 * 1000;
+            const now = new Date(Date.now() + jstOffset);
+            const dayOfWeek = now.getUTCDay(); // Sunday is 0 in UTC
+            const sunday = new Date(now.setUTCDate(now.getUTCDate() - dayOfWeek));
+            return sunday.toISOString().split('T')[0];
+        }
+
+        function calculateTotalTime(user) {
+            let totalTime = user.accumulatedToday || 0;
+            if (user.isStudying && user.lastStartTime && typeof user.lastStartTime.toDate === 'function') {
+                 totalTime += (Date.now() - user.lastStartTime.toDate().getTime());
+            }
+            return totalTime;
+        }
+
+        function calculateWeeklyTotalTime(user) {
+            let totalTime = user.accumulatedThisWeek || 0;
+            if (user.isStudying && user.lastStartTime && typeof user.lastStartTime.toDate === 'function') {
+                 totalTime += (Date.now() - user.lastStartTime.toDate().getTime());
+            }
+            return totalTime;
+        }
+
+        // --- タブ切り替え ---
+        showDailyBtn.addEventListener('click', () => {
+            rankingList.classList.remove('hidden');
+            weeklyRankingList.classList.add('hidden');
+            showDailyBtn.classList.add('active-tab');
+            showWeeklyBtn.classList.remove('active-tab');
+        });
+
+        showWeeklyBtn.addEventListener('click', () => {
+            rankingList.classList.add('hidden');
+            weeklyRankingList.classList.remove('hidden');
+            showWeeklyBtn.classList.add('active-tab');
+            showDailyBtn.classList.remove('active-tab');
+        });
+
+    </script>
+</body>
+</html>
